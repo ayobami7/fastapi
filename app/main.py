@@ -5,6 +5,7 @@ from typing import Optional
 from random import randrange
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import time
 
 app = FastAPI()
 
@@ -14,18 +15,20 @@ class Post(BaseModel):
     published: bool = True
     rating: Optional[int] = None
 
-try:
-    conn = psycopg2.connect(host='localhost', database='fastapi', user='postgres',
-                            password='postgres', cursor_factory=RealDictCursor)
-    cursor = conn.cursor()
-    print('Database connection was succesfull')
-except Exception as error:
-    print('Connection too database failed')
-    print("Érror: ", error)
+while True:
+    try:
+        conn = psycopg2.connect(database="fastapi", user="postgres", password="postgres", host="localhost", cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        print('Database connection was successful')
+        break  # Exit the loop if the connection is successful
+    except Exception as error:
+        print('Connection to database failed')
+        print("Error: ", error)
+        time.sleep(2)
 
-
-my_posts = [{"title": "title of post 1", "content":"content of post 1", "id": 1},
-            {"title": "favorite food", "content":"I like pizza", "id": 2}]
+# Rest of the code after the successful database connection
+my_posts = [{"title": "title of post 1", "content": "content of post 1", "id": 1},
+            {"title": "favorite food", "content": "I like pizza", "id": 2}]
 
 
 def find_post(id):
@@ -46,51 +49,56 @@ async def root():
 # getting all posts
 @app.get("/posts")
 def get_posts():
-    return{"data": my_posts}
+    cursor.execute("""  SELECT * FROM posts """)
+    posts = cursor.fetchall()
+    print(posts)
+    return{"data": posts}
 
 # creating a post
 @app.post("/createposts", status_code=status.HTTP_201_CREATED)
 def create_posts(post: Post):
-    post_dict=(post.dict())
-    post_dict['id'] = randrange(0,1000000)
-    my_posts.append(post_dict)
-    return{"data": post_dict} 
+    cursor.execute(""" INSERT INTO posts (title, content, published) 
+                   VALUES(%s, %s,%s) """, 
+                   (post.title, post.content, post.published,))
+   
+    new_post = cursor.fetchone()
+    conn.commit()
+    return {"data": new_post}    
 
 # getting individual post by id
 @app.get("/posts/{id}")
 def get_post(id: int):
-    post = find_post(id)
+    cursor.execute("""  SELECT * FROM posts WHERE id = %s; """, (str(id),))
+    post = cursor.fetchone()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
                             detail= f"post with id :{id} was not found")
-        # response.status_code = status.HTTP_404_NOT_FOUND
-        # return('message': f"post with id :{id} was not found")
+
     return{"post_detail": post}
 
 # deleting a post
 @app.delete("/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(id: int):
-    # find index of post id
-    index = find_index_post(id)
-
-    if index == None:
+    cursor.execute(""" DELETE FROM posts WHERE id = %s RETURNING * """, (str(id),))
+    deleted_post = cursor.fetchone()
+    conn.commit()
+    if deleted_post == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"post with id:{id} does not exist")
-    # pop the id
-    my_posts.pop(index)
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # updating a post
 @app.put("/posts/{id}", status_code=status.HTTP_202_ACCEPTED)
-def update_post(id: int, post:Post):
-    # find index of post id
-    index = find_index_post(id)
-
-    if index == None:
+def update_post(id: int, post:Post): 
+    cursor.execute("""  UPDATE posts 
+                   SET title = %s, content = %s, published = %s WHERE id = %s 
+                   RETURNING *;""", 
+                   (post.title, post.content, post.published, str(id),))
+    updated_post = cursor.fetchone()
+    conn.commit()
+    if updated_post == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"post with id:{id} does not exist")
-    post_dict = post.dict()
-    post_dict['id'] = id
-    my_posts[index] = post_dict
-    return {'data': post_dict}
+    return {'data': updated_post}
      
